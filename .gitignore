@@ -1,0 +1,18 @@
+# Credentials and the cached Spotify token. Never commit these.
+.env
+.spotify_cache
+
+# Python environment and caches.
+.venv/
+.venv-old/
+__pycache__/
+
+# Downloaded voice models, rendered speech and the rotation store.
+voices/
+audio/
+rotation.db
+
+# Personal listening data and anything derived from it.
+*.csv
+
+.DS_Store
