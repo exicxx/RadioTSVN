@@ -1,251 +1,235 @@
 # RadioTSVN
 
-**Radio for the Individual.**
+Radio for the Individual.
 
-A personal radio station built on Spotify. It picks tracks from a playlist, and
-an AI presenter talks between them. Twice an hour it stops for news, sport and
-weather read from live feeds by a second voice. Everything runs on one Mac, the
-speech is synthesised locally, and no language model is involved while it plays.
+A personal radio station built on the Spotify Web API. Tracks are selected from
+a Spotify playlist under standard rotation rules, a synthesised presenter speaks
+between them, and news, sport and weather bulletins are read from public feeds
+on the hour and half hour. Speech is synthesised locally. No language model runs
+during playback.
 
-## What it does
+## Status
 
-**Music.** The station chooses every track itself from one Spotify playlist and
-queues it one ahead. Selection follows ordinary radio practice. No track repeats
-inside four hours, no artist repeats inside 45 minutes, and a skipped track is
-played less often for a while, with the penalty wearing off over a couple of
-months. A skip means "not now", not "never".
-
-**Breaks.** Every two or three tracks the presenter comes in as a song finishes
-and talks over the start of the next one, without the music stopping. A break is
-an opening, sometimes a thought, and usually an introduction to the next record.
-The lines come from a hand written bank with a generated extension, in two
-tiers, witty and plain, with at most one joke per break.
-
-**Bulletins.** On the hour and half hour the presenter announces the bulletin
-over the music, the music fades out and stops, and a second voice reads it,
-starting with the time. News and weather on the hour, sport and weather on the
-half. The presenter then introduces the next song. A section with nothing in it
-is left out instead of being announced as empty.
-
-**The presenter** is openly an AI, the whole staff, and stuck in the studio. It
-never gives an opinion on a record, since it has not heard one.
-
-## Design
-
-There is no language model in the playback loop. The station was built for an
-8GB Apple M1, where a resident local model causes memory pressure, and a paid
-API call per break was ruled out as a permanent dependency. Presenter lines are
-written ahead of time and selected at runtime. Bulletins need no generation at
-all, because they are filled from feeds.
-
-Speech uses [Kokoro](https://github.com/thewh1teagle/kokoro-onnx) through its
-ONNX build, running at roughly real time on the M1, with
-[Piper](https://github.com/OHF-Voice/piper1-gpl) as an automatic fallback if
-Kokoro cannot load. Pauses are set by punctuation, since Kokoro gives every mark
-the same short pause and a comic beat needs more room than a comma.
+The station runs end to end on macOS: track selection, presenter breaks and
+bulletins. Selection currently draws from a single playlist. Switching between
+mood playlists by time of day is planned and not yet implemented.
 
 ## Requirements
 
-- macOS. Speech is played with `afplay`, and Spotify must play on the same Mac
-  so that the system mixes the two. A phone or Connect speaker breaks the effect.
+- macOS. Speech is played through `afplay`, and Spotify must play on the same
+  machine so that the two are mixed by the system.
 - Python 3.13.
-- Spotify Premium, on both the listener's account and the account that owns the
-  Spotify developer app. This has been a Spotify requirement since February 2026.
-- About 500MB of disk for the voice models.
+- Spotify Premium on the listening account and on the account that owns the
+  Spotify developer app, as required by Spotify since February 2026.
+- Approximately 500MB of disk space for voice models.
 
 ## Setup
 
-**1. Create the environment.**
+1. Create the environment.
 
-```bash
-python3.13 -m venv .venv
-.venv/bin/python -m pip install -r requirements.txt
-```
+   ```bash
+   python3.13 -m venv .venv
+   .venv/bin/python -m pip install -r requirements.txt
+   ```
 
-**2. Create a Spotify app.** Every user needs their own. Spotify limits a
-development mode app to five users added by hand, and higher tiers are not
-available to individuals.
+2. Create a Spotify app in the
+   [developer dashboard](https://developer.spotify.com/dashboard), with Web API
+   enabled and the redirect URI `http://127.0.0.1:8888/callback`. Spotify does
+   not accept `localhost` in redirect URIs. Each user requires their own app,
+   because a development mode app is limited to five manually added users.
 
-Sign in at the [Spotify developer dashboard](https://developer.spotify.com/dashboard)
-first, since the dashboard redirects to the marketing homepage when signed out.
-Create an app, tick Web API, and register this redirect URI exactly.
+3. Copy `.env.example` to `.env` and enter the app's client ID. Authentication
+   uses PKCE, so no client secret is required.
 
-```
-http://127.0.0.1:8888/callback
-```
+4. Download the Kokoro model files (approximately 350MB).
 
-Spotify no longer accepts `localhost`, so the loopback address has to be written
-as `127.0.0.1`.
+   ```bash
+   mkdir -p voices/kokoro
+   curl -L -o voices/kokoro/kokoro-v1.0.onnx https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx
+   curl -L -o voices/kokoro/voices-v1.0.bin https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin
+   ```
 
-**3. Configure.**
+   Piper fallback voices are downloaded automatically on first use.
 
-```bash
-cp .env.example .env
-```
+5. Set `LIBRARY_PLAYLIST` and the bulletin settings in `.env`
+   (see [Configuration](#configuration)).
 
-Paste the app's Client ID from its Basic Information page into `.env`. There is
-no client secret. Authentication uses PKCE, which is the flow Spotify recommends
-for software that cannot keep a secret, and the client ID is not sensitive.
+6. Verify the setup in stages, with a track playing in the Spotify desktop app.
+   The first run opens a browser window to authorise the app.
 
-**4. Download the Kokoro model.** About 350MB.
+   ```bash
+   .venv/bin/python p0_now_playing.py   # authentication and playback state
+   .venv/bin/python p1_talk_once.py     # speech and volume ducking over one track
+   ```
 
-```bash
-mkdir -p voices/kokoro
-curl -L -o voices/kokoro/kokoro-v1.0.onnx https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx
-curl -L -o voices/kokoro/voices-v1.0.bin https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin
-```
+7. Run the station.
 
-The Piper fallback voices download themselves on first use.
+   ```bash
+   .venv/bin/python p2_station.py
+   ```
 
-**5. Make a playlist and name it in `.env`.** See [Playlists](#playlists).
+   `--bulletin news` or `--bulletin sport` schedules a bulletin a few seconds
+   after start, for testing. Ctrl-C stops the station and restores the volume.
 
-**6. Check each stage.** The scripts are numbered in build order, and each one
-checks a piece the next depends on. Open the Spotify desktop app and start
-something playing first. The first run opens a browser to authorise the app.
+## Configuration
 
-```bash
-.venv/bin/python p0_now_playing.py
-```
+All settings are read from `.env`. `.env.example` lists each one with its
+default.
 
-Prints what Spotify is playing. Confirms authentication and playback access.
+| Setting | Description |
+|---|---|
+| `SPOTIFY_CLIENT_ID` | Client ID of the Spotify app |
+| `SPOTIFY_REDIRECT_URI` | Redirect URI registered on the app |
+| `LIBRARY_PLAYLIST` | Name of the playlist tracks are selected from |
+| `STATION_NAME` | Station name as spoken, following "Radio" |
+| `PRESENTER_VOICE` | Kokoro voice (e.g. `bm_george`) or Piper voice (e.g. `en_GB-alan-medium`) |
+| `NEWS_VOICE` | Voice used for bulletins |
+| `PIPER_VOICE` | Presenter voice used if Kokoro fails to load |
+| `CROSSFADE_MS` | Spotify's crossfade setting in milliseconds, or 0 |
+| `NEWS_MIX` | News categories and headline counts, in reading order |
+| `LOCAL_NEWS_FEED` | RSS feed used for the `local` news category |
+| `SPORTS` | Sports covered, in reading order |
+| `WEATHER_LOCATION` | Place name with optional country code, or latitude and longitude |
 
-```bash
-.venv/bin/python p1_talk_once.py
-```
+A bulletin setting left out of `.env` takes its default. A bulletin setting
+present but empty disables that section.
 
-Speaks one line over the current track, with at least thirty seconds of it left.
-Confirms speech and volume ducking. Add `--hard` to pause, speak and resume
-instead.
+**News.** `NEWS_MIX` takes a comma separated list of `category:count` pairs, for
+example `uk:2, local:1, world:1`. Available categories are `uk`, `world`,
+`politics`, `business`, `technology`, `health`, `science`, `entertainment`
+(BBC News), `space` (phys.org) and `local`. The `local` category reads
+`LOCAL_NEWS_FEED`, which accepts any RSS feed. BBC regional feeds follow the
+pattern `https://feeds.bbci.co.uk/news/england/<region>/rss.xml`.
 
-**7. Run the station.**
+**Sport.** `SPORTS` takes a comma separated list. `rugby-premiership` and `afl`
+provide dedicated segments with results and fixtures. Any other entry is read
+as a BBC Sport section by its URL name, such as `cricket`, `football`,
+`formula1`, `golf`, `tennis`, `rugby-league`, `boxing`, `cycling` or
+`athletics`, and contributes one headline per bulletin.
 
-```bash
-.venv/bin/python p2_station.py
-```
-
-Ctrl-C stops it and restores the volume. To hear a bulletin without waiting for
-the half hour, use one of these.
-
-```bash
-.venv/bin/python p2_station.py --bulletin news
-.venv/bin/python p2_station.py --bulletin sport
-```
+**Weather.** `WEATHER_LOCATION` accepts a place name with an optional two letter
+country code (`London, GB`), or coordinates (`53.48, -2.24`). Place names are
+resolved through the Open-Meteo geocoding API.
 
 ## Playlists
 
-The station reads **one playlist**, the one named in `LIBRARY_PLAYLIST`. The name
-match ignores case and surrounding spaces. A playlist of 100 tracks or more
-gives the rotation rules room to work, and a smaller one will repeat artists
-more often than it should.
+The station selects from one playlist, named by `LIBRARY_PLAYLIST` and matched
+case-insensitively against the listener's playlists. A playlist of at least 100
+tracks is recommended, so that the repetition rules have sufficient range.
 
-The playlist must be one the listener **owns or collaborates on**. Since
-February 2026 Spotify only returns the contents of those playlists to
-development mode apps, and a public playlist belonging to someone else comes
-back empty. To use someone else's playlist, open it in the Spotify app, select
-every track, add them to a new playlist in the listener's own library, and name
-that one in `.env`.
+Since February 2026 the Spotify Web API returns playlist contents to development
+mode apps only for playlists the user owns or collaborates on. Public playlists
+owned by other users return no tracks. To use another user's playlist, copy its
+tracks into a playlist in the listener's own library.
 
-If `LIBRARY_PLAYLIST` is empty, or the playlist cannot be read, the station
-falls back to riding whatever Spotify plays, in which case a playlist should be
-started on shuffle by hand.
+If no playlist is configured, or it cannot be read, the station falls back to
+presenting over whatever Spotify is playing.
 
-**Planned.** A set of mood playlists switched by time of day, which is not built
-yet. The intended set, named individually because Spotify folders are invisible
-to the API, is below.
+Planned mood playlists, for selection by time of day:
 
 | Playlist | Character |
 |---|---|
-| General Listening | The base rotation. Survives being heard often, no strong mood |
-| Mornings | Warm and mid tempo. Nothing abrasive before about ten |
-| Focus | Steady and undemanding, vocals that do not pull attention |
-| Lift | Fast and loud |
-| Evenings | Slower and warmer |
-| Late | Sparse and quiet. After about eleven |
+| General Listening | Base rotation, no strong mood |
+| Mornings | Warm, mid tempo |
+| Focus | Steady, unobtrusive vocals |
+| Lift | Fast, loud |
+| Evenings | Slower, warmer |
+| Late | Sparse, quiet |
 
-### Building a playlist from listening history
+### Candidates from listening history
 
-`history_candidates.py` reads a Spotify account data export, requested from the
-Privacy page of the Spotify account settings, and proposes tracks for these
-playlists. It skips the most played tracks, which are already known, and looks
-for the band below them. That means tracks finished on several separate days and
-rarely abandoned early, since those survive repetition. It also flags tracks
-played at a particular time of day unusually often, using a binomial test
-against the listener's own daily pattern.
+`history_candidates.py` reads a Spotify account data export (requested from the
+account's Privacy settings) and proposes tracks for these playlists.
 
 ```bash
 .venv/bin/python history_candidates.py "/path/to/Spotify Account Data" candidates.csv
 ```
 
-The account data export has no track identifiers and no skip flag, so a play
-under thirty seconds stands in for a skip. Identifiers are matched from liked
-songs and playlists in the same export where possible.
+The most played tracks are excluded, and the remaining tracks are ranked by the
+number of separate days on which they were played to completion. A daypart
+leaning is assigned where a track's plays in that daypart exceed the listener's
+overall distribution, tested with a one-sided binomial test at 0.01. The account
+data export contains neither track identifiers nor a skip flag, so a play under
+30 seconds is treated as a skip, and identifiers are matched from the export's
+liked songs and playlists where available.
 
-## Configuration
+## Method
 
-Set in `.env`. See `.env.example` for the full list.
+**Track selection.** Each track is drawn by weighted random choice under three
+rules. A track is not repeated within four hours, an artist is not repeated
+within 45 minutes, and a skipped track has its weight reduced by 70 percent,
+with the reduction halving every 14 days. The decaying penalty reflects that
+many skips indicate recent repetition rather than dislike. Play and skip history
+is stored in a local SQLite file.
 
-| Setting | Meaning |
-|---|---|
-| `SPOTIFY_CLIENT_ID` | The Spotify app's client ID |
-| `SPOTIFY_REDIRECT_URI` | Must match the app's registered redirect URI |
-| `LIBRARY_PLAYLIST` | Name of the playlist the station chooses from |
-| `STATION_NAME` | The name spoken on air, as "Radio" plus this. Write it as it should sound |
-| `PRESENTER_VOICE` | A Kokoro voice such as `bm_george`, or a Piper voice such as `en_GB-alan-medium` |
-| `NEWS_VOICE` | The newsreader's voice. A different voice from the presenter tells the listener the music stopped on purpose |
-| `PIPER_VOICE` | Fallback presenter voice if Kokoro cannot load |
-| `CROSSFADE_MS` | Match Spotify's crossfade setting, or 0 if it is off |
+**Presenter breaks.** A break occurs every two to three tracks, timed to begin as
+a track ends and to continue over the start of the next without stopping the
+music. Lines are drawn from a bank of templates in two tiers, witty and plain,
+with at most one witty line per break. The bank is written in advance: the
+hand-written lines are in `patter.py` and a generated extension in
+`patter_bulk.py`.
 
-Content is set in code. `feeds.py` holds the news mix (`NEWS_MIX`), the sports
-(`SPORT_MIX`), and the weather location, which defaults to London. The sport
-segment is built around Premiership rugby union and Australian rules football.
-Every BBC Sport feed follows the same URL pattern, so adding a sport is one line.
-The presenter's lines are in `patter.py` (hand written) and `patter_bulk.py`
-(generated).
+**Bulletins.** Bulletins are clock-driven and fire on the hour (news and
+weather) and half hour (sport and weather). The presenter announces the
+bulletin over the music, playback fades and pauses, a second voice reads the
+bulletin, and the presenter introduces the next track. Sections with no content
+are omitted. Bulletin audio is rendered three minutes ahead of its slot.
 
-## Sources
+**Speech.** Speech is synthesised with
+[Kokoro](https://github.com/thewh1teagle/kokoro-onnx) (ONNX build), with
+[Piper](https://github.com/OHF-Voice/piper1-gpl) as an automatic fallback.
+Text is split at sentence ends and ellipses and each piece synthesised
+separately, so that pause lengths can be set by punctuation. A text normaliser
+rewrites forms a synthesiser misreads, such as "feat.", remaster tags and sums
+of money.
 
-All free and keyless.
+**No runtime model.** There is no language model in the playback loop.
+Presenter lines are written ahead of time and selected at runtime, and bulletins
+are assembled directly from feed content.
 
-- BBC News and BBC Sport RSS, and phys.org for space news
-- [Open-Meteo](https://open-meteo.com) for weather
-- [Squiggle](https://api.squiggle.com.au) for AFL fixtures and results, and
-  AFL.com.au for AFL news
-- ESPN's public scoreboard for Premiership rugby fixtures and results
+## Data sources
 
-Requests are cached for a few minutes and identify the station in their
+All sources are free and require no key.
+
+- BBC News and BBC Sport RSS feeds
+- [phys.org](https://phys.org) space news RSS
+- [Open-Meteo](https://open-meteo.com) forecast and geocoding APIs
+- [Squiggle](https://api.squiggle.com.au) API for AFL results, and AFL.com.au RSS
+- ESPN public scoreboard for Premiership rugby results and fixtures
+
+Responses are cached for five minutes. Requests identify the project in their
 User-Agent.
 
-## Known limits
+## Limitations
 
-- **Spotify's API is a moving target.** Audio features, recommendations and
-  previews were withdrawn for new apps in November 2024, and February 2026 cut
-  further. Spotify has proposed restricting development mode to fewer
-  endpoints, and the player endpoints this project relies on are in scope. The
-  foundation is not guaranteed long term.
-- **No intro lengths.** The endpoint that exposed them was withdrawn, so the
-  presenter will occasionally talk over a vocal on a track with a cold open.
-- **No sound analysis.** Energy, tempo and mood are not available from Spotify
-  any more, which is why playlists are sorted by hand.
-- **Goes off air when Spotify does.** After thirty seconds with no active
-  Spotify device the station stops, since on a personal station that means the
-  listener has finished. An ordinary pause does not trigger it.
-- **Kokoro needs time.** A bulletin takes around a minute and a half to render
-  on an M1, so bulletins are prepared three minutes ahead.
+- Spotify withdrew audio features, audio analysis, recommendations and previews
+  for new apps in November 2024, with further removals in February 2026.
+  Proposed restrictions to development mode include the player endpoints this
+  project depends on.
+- Track intro lengths are unavailable, so the presenter occasionally speaks over
+  vocals on tracks without an instrumental intro.
+- Mood and energy cannot be derived from Spotify, so playlists are sorted by
+  hand.
+- The station stops after 30 seconds without an active Spotify device.
+- Kokoro synthesises at approximately real time on a laptop CPU. A bulletin
+  takes 80 to 100 seconds to render.
+- BBC files all rugby union in a single feed, so Premiership stories are
+  selected by keyword and occasional international stories pass through.
 
 ## Files
 
-| File | Role |
+| File | Purpose |
 |---|---|
-| `p2_station.py` | The station loop |
-| `library.py` | Track selection and rotation rules, stored in `rotation.db` |
-| `patter.py`, `patter_bulk.py` | The presenter's line bank |
-| `bulletin.py` | Assembles news and sport bulletins |
-| `feeds.py` | Fetches news, sport and weather |
-| `radio_speech.py` | Speech synthesis, playback and volume ducking |
-| `normalise.py` | Rewrites text so it is spoken properly, for example "feat." and money |
+| `p2_station.py` | Station loop |
+| `library.py` | Track selection and rotation state |
+| `patter.py`, `patter_bulk.py` | Presenter line bank |
+| `bulletin.py` | Bulletin assembly |
+| `feeds.py` | News, sport and weather retrieval |
+| `radio_speech.py` | Speech synthesis, playback and volume control |
+| `normalise.py` | Text normalisation for speech |
 | `radio_auth.py` | Spotify authentication |
-| `history_candidates.py` | Playlist candidates from a listening history export |
-| `p0_now_playing.py`, `p1_talk_once.py` | Setup checks, in build order |
+| `history_candidates.py` | Playlist candidates from listening history |
+| `p0_now_playing.py`, `p1_talk_once.py` | Setup verification |
 
 ## Licence
 

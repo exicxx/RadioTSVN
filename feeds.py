@@ -11,16 +11,20 @@ Results are cached for a few minutes. A bulletin fires twice an hour, so there
 is no reason to pull the same feeds on every poll, and the sources are free and
 unauthenticated and should be treated accordingly.
 
+What is covered is configured in .env, through NEWS_MIX, LOCAL_NEWS_FEED,
+SPORTS and WEATHER_LOCATION. The defaults and formats are set out below.
+
 Sources, all free and without keys:
-    BBC News and BBC Sport RSS
-    Open-Meteo for weather
-    Squiggle for AFL fixtures and results
-    ESPN's public scoreboard for Premiership rugby results
+    BBC News and BBC Sport RSS, phys.org for space news
+    Open-Meteo for weather and for resolving place names
+    Squiggle for AFL results, AFL.com.au for AFL news
+    ESPN's public scoreboard for Premiership rugby results and fixtures
 """
 
 import datetime
 import html
 import json
+import os
 import re
 import time
 import urllib.parse
@@ -34,40 +38,45 @@ TIMEOUT_SECONDS = 15
 # about not hammering the sources when a bulletin is regenerated.
 CACHE_SECONDS = 300
 
+# News categories that can be named in NEWS_MIX. "local" is not listed here,
+# because its feed is whatever LOCAL_NEWS_FEED is set to. "space" uses phys.org
+# rather than BBC, because BBC files science and environment together and that
+# feed is dominated by the environment half.
 NEWS_FEEDS = {
     "uk": "https://feeds.bbci.co.uk/news/uk/rss.xml",
-    "london": "https://feeds.bbci.co.uk/news/england/london/rss.xml",
     "world": "https://feeds.bbci.co.uk/news/world/rss.xml",
+    "politics": "https://feeds.bbci.co.uk/news/politics/rss.xml",
+    "business": "https://feeds.bbci.co.uk/news/business/rss.xml",
+    "technology": "https://feeds.bbci.co.uk/news/technology/rss.xml",
+    "health": "https://feeds.bbci.co.uk/news/health/rss.xml",
     "science": "https://feeds.bbci.co.uk/news/science_and_environment/rss.xml",
+    "entertainment": "https://feeds.bbci.co.uk/news/entertainment_and_arts/rss.xml",
     "space": "https://phys.org/rss-feed/space-news/",
 }
 
-# How many headlines to take from each category, in reading order. Reweight here
-# rather than in the bulletin composer.
-# The "science" slot uses phys.org rather than BBC, because BBC files science
-# and environment together and the feed is dominated by the environment half.
-NEWS_MIX = [("uk", 2), ("london", 1), ("world", 1), ("space", 1)]
-
-SPORT_FEEDS = {
-    "rugby": "https://feeds.bbci.co.uk/sport/rugby-union/rss.xml",
-    "athletics": "https://feeds.bbci.co.uk/sport/athletics/rss.xml",
-    # BBC does not cover Australian rules, so AFL reporting comes from the
-    # league's own feed. Squiggle supplies the scores; this supplies the story
-    # around them, so the segment is not a bare list of numbers.
-    "afl": "https://www.afl.com.au/rss",
-}
-
-# Sports covered beyond rugby union and Australian rules, in reading order,
-# with how many headlines to take from each.
+# Settings read from the environment, with the defaults used when a setting is
+# absent. Each is read when a bulletin is built, so .env must be loaded first.
 #
-# BBC's catch all sport feed was dropped on 2026-09-24. It is majority football,
-# eight of its top fifteen items when this was checked, and football is not
-# wanted. Filtering it by keyword would mean maintaining a list of clubs,
-# players and managers and would still leak, whereas naming the sports is exact.
-# Every BBC per sport feed follows the same pattern, so adding one is a line:
-# cricket, rugby-league, formula1, tennis, golf, boxing, cycling and
-# mixed-martial-arts all exist and were verified.
-SPORT_MIX = [("athletics", 1)]
+#     NEWS_MIX          categories and headline counts, in reading order
+#     LOCAL_NEWS_FEED   RSS feed read as the "local" category; empty for none
+#     SPORTS            sports in reading order; empty for no sport
+#     WEATHER_LOCATION  place name, optionally with a two letter country code,
+#                       or "latitude, longitude"; empty for no weather
+DEFAULT_NEWS_MIX = "uk:2, local:1, world:1, space:1"
+DEFAULT_LOCAL_NEWS_FEED = "https://feeds.bbci.co.uk/news/england/london/rss.xml"
+DEFAULT_SPORTS = "rugby-premiership, athletics, afl"
+DEFAULT_WEATHER_LOCATION = "London, GB"
+
+# Any BBC Sport section can be named in SPORTS by its address, for example
+# cricket, football, formula1, golf, tennis, rugby-league, boxing, cycling or
+# mixed-martial-arts. Each contributes this many headlines.
+BBC_SPORT_URL = "https://feeds.bbci.co.uk/sport/{}/rss.xml"
+BBC_SPORT_HEADLINES = 1
+
+# BBC does not cover Australian rules, so AFL reporting comes from the league's
+# own feed. Squiggle supplies the scores; this supplies the story around them,
+# so the segment is not a bare list of numbers.
+AFL_NEWS_URL = "https://www.afl.com.au/rss"
 
 # BBC publishes all rugby union under one feed, so Premiership coverage has to
 # be picked out by name. This is best effort and the odd international or URC
@@ -85,9 +94,8 @@ SQUIGGLE_URL = "https://api.squiggle.com.au/"
 # from, so a match is never announced the wrong way round.
 ESPN_PREM_URL = "https://site.api.espn.com/apis/site/v2/sports/rugby/267979/scoreboard"
 
-# Premiership stories and results per sport bulletin. Rugby is the sport most
-# wanted, so it leads the segment and gets more room than anything else. Six
-# results covers a full round.
+# Premiership stories and results per sport bulletin. Six results covers a full
+# round.
 PREM_STORIES = 2
 PREM_RESULTS = 6
 
@@ -101,9 +109,8 @@ PREM_STORY_DAYS = frozenset({3, 4, 5, 6})
 PREM_FIXTURE_DAYS = frozenset({3, 4, 5, 6})
 PREM_RESULT_DAYS = frozenset({4, 5, 6})
 
-# London city centre.
-DEFAULT_LATITUDE = 53.4808
-DEFAULT_LONGITUDE = -2.2426
+GEOCODING_URL = "https://geocoding-api.open-meteo.com/v1/search"
+FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 
 # World Meteorological Organization codes, phrased the way a forecast is read.
 WEATHER_CODES = {
@@ -139,6 +146,78 @@ def _get(url):
 
     _cache[url] = (time.time(), body)
     return body
+
+
+def _setting(name, default):
+    """An environment setting, stripped, or the default if it is not set.
+
+    A setting present but empty is returned as empty, which is how a section is
+    switched off, so absence and emptiness are deliberately different.
+    """
+    value = os.getenv(name)
+    return default if value is None else value.strip()
+
+
+def _names(text):
+    """A comma separated list of names, lower cased, empties dropped."""
+    return [part.strip().lower() for part in text.split(",") if part.strip()]
+
+
+def news_mix():
+    """The configured news categories as (name, count) pairs, in reading order.
+
+    Written as "uk:2, local:1". A name without a count takes one headline, and
+    a count that is not a whole number is treated as one.
+    """
+    mix = []
+    for entry in _names(_setting("NEWS_MIX", DEFAULT_NEWS_MIX)):
+        name, _, count = entry.partition(":")
+        mix.append((name.strip(), int(count) if count.strip().isdigit() else 1))
+    return mix
+
+
+def sports():
+    """The configured sports, in reading order."""
+    return _names(_setting("SPORTS", DEFAULT_SPORTS))
+
+
+_locations = {}
+
+
+def weather_location():
+    """Latitude, longitude and place name for the weather, or None.
+
+    Accepts "latitude, longitude" directly. Otherwise the setting is a place
+    name, optionally followed by a two letter country code to settle ambiguous
+    names, such as "London, GB" against London, New Hampshire. Names are
+    resolved once through Open-Meteo's geocoding service and remembered for the
+    life of the process. None means no weather, either because the setting is
+    empty or because the place could not be found.
+    """
+    text = _setting("WEATHER_LOCATION", DEFAULT_WEATHER_LOCATION)
+    if not text:
+        return None
+    if text in _locations:
+        return _locations[text]
+
+    parts = [part.strip() for part in text.split(",")]
+    try:
+        latitude, longitude = float(parts[0]), float(parts[1])
+        found = (latitude, longitude, text)
+    except (ValueError, IndexError):
+        params = {"name": parts[0], "count": 1}
+        if len(parts) > 1 and len(parts[-1]) == 2 and parts[-1].isalpha():
+            params["countryCode"] = parts[-1].upper()
+        body = _get(GEOCODING_URL + "?" + urllib.parse.urlencode(params))
+        try:
+            place = json.loads(body)["results"][0]
+            found = (place["latitude"], place["longitude"], place["name"])
+        except (TypeError, ValueError, KeyError, IndexError):
+            # Not remembered, so a transient failure is retried next bulletin.
+            return None
+
+    _locations[text] = found
+    return found
 
 
 def clean(text):
@@ -253,8 +332,9 @@ def news(mix=None):
     """
     stories = []
     seen = set()
-    for category, wanted in (mix or NEWS_MIX):
-        url = NEWS_FEEDS.get(category)
+    local_feed = _setting("LOCAL_NEWS_FEED", DEFAULT_LOCAL_NEWS_FEED)
+    for category, wanted in (mix or news_mix()):
+        url = local_feed if category == "local" else NEWS_FEEDS.get(category)
         if not url:
             continue
         taken = 0
@@ -274,17 +354,26 @@ def news(mix=None):
     return stories
 
 
-def weather(latitude=DEFAULT_LATITUDE, longitude=DEFAULT_LONGITUDE):
-    """Current conditions and today's range. Returns a dict, or None."""
+def weather():
+    """Current conditions and today's range for the configured place.
+
+    Returns a dict, or None if weather is switched off or unavailable. The
+    forecast day is the place's own, since Open-Meteo is asked to use the local
+    timezone of the coordinates.
+    """
+    location = weather_location()
+    if location is None:
+        return None
+    latitude, longitude, _ = location
     query = urllib.parse.urlencode({
         "latitude": latitude,
         "longitude": longitude,
         "current": "temperature_2m,weather_code,wind_speed_10m",
         "daily": "temperature_2m_max,temperature_2m_min,precipitation_probability_max",
-        "timezone": "Europe/London",
+        "timezone": "auto",
         "forecast_days": 1,
     })
-    body = _get("https://api.open-meteo.com/v1/forecast?" + query)
+    body = _get(FORECAST_URL + "?" + query)
     if body is None:
         return None
     try:
@@ -458,76 +547,99 @@ def _prem_fixtures_speech(matches, now, after_results):
     return opener + " " + " ".join(sentences)
 
 
-def sport(include_afl=True, include_rugby=True, include_other=True, now=None):
-    """Sport items across the chosen sources. Empty sections are simply absent.
+def _premiership(now, seen):
+    """Premiership rugby union results, stories and fixtures, by day of the week.
 
-    Premiership rugby leads, because it is the sport most wanted, followed by
-    the other named sports and then Australian rules. The Australian rules
-    segment falls silent on its own in the off season, since both its sources
-    go quiet, so nothing has to be switched off when the season ends.
+    The segment follows the week rather than running every day. Results lead
+    from Friday, because the scores are what is most wanted, then stories, then
+    whatever is still to be played, since "still to come" is a natural way to
+    leave a segment.
+    """
+    weekday = now.weekday()
+    if weekday not in (PREM_STORY_DAYS | PREM_FIXTURE_DAYS | PREM_RESULT_DAYS):
+        return []
+    items = []
+    weekend = _prem_weekend(now)
+
+    results = (_prem_results_speech(weekend)
+               if weekday in PREM_RESULT_DAYS else None)
+    if results:
+        items.append({"source": "rugby-scores", "speech": results})
+
+    taken = 0
+    for item in (_rss_items(BBC_SPORT_URL.format("rugby-union"))
+                 if weekday in PREM_STORY_DAYS else []):
+        if taken >= PREM_STORIES:
+            break
+        if item["title"] in seen or _is_rolling(item):
+            continue
+        haystack = (item["title"] + " " + item["summary"]).lower()
+        if any(term in haystack for term in RUGBY_PREM_TERMS):
+            seen.add(item["title"])
+            taken += 1
+            items.append({"source": "rugby", "speech": _story(item)})
+
+    fixtures = (_prem_fixtures_speech(weekend, now, bool(results))
+                if weekday in PREM_FIXTURE_DAYS else None)
+    if fixtures:
+        items.append({"source": "rugby-fixtures", "speech": fixtures})
+    return items
+
+
+def _afl(seen):
+    """AFL reporting followed by the latest scores.
+
+    Reporting comes first, so the segment reads as news with a results round up
+    rather than a list of numbers with nothing around it. The segment falls
+    silent on its own in the off season, since both sources go quiet.
+    """
+    items = []
+    story = _first_story(AFL_NEWS_URL, seen)
+    if story is not None:
+        seen.add(story["title"])
+        items.append({"source": "afl-news", "speech": _story(story)})
+
+    results = _afl_results()
+    if results:
+        items.append({
+            "source": "afl-scores",
+            "speech": "And the latest from the A F L. "
+                      + " ".join(r["speech"] for r in results),
+        })
+    return items
+
+
+def _bbc_sport(section, seen):
+    """Headlines from one BBC Sport section, named by its address."""
+    items = []
+    for item in _rss_items(BBC_SPORT_URL.format(section)):
+        if len(items) >= BBC_SPORT_HEADLINES:
+            break
+        if item["title"] in seen or _is_rolling(item):
+            continue
+        seen.add(item["title"])
+        items.append({"source": section, "speech": _story(item)})
+    return items
+
+
+def sport(chosen=None, now=None):
+    """Sport items for the configured sports, in the order they are listed.
+
+    "rugby-premiership" and "afl" have dedicated segments with scores and
+    fixtures. Any other name is read as a BBC Sport section. A sport with
+    nothing to report is simply absent.
 
     A story is read once however many feeds carry it, because BBC files the
     same item under more than one sport.
     """
     now = now or datetime.datetime.now().astimezone()
-    weekday = now.weekday()
     items = []
     seen = set()
-
-    if include_rugby and weekday in (PREM_STORY_DAYS | PREM_FIXTURE_DAYS | PREM_RESULT_DAYS):
-        weekend = _prem_weekend(now)
-
-        # Results lead, because the scores are what is most wanted.
-        results = (_prem_results_speech(weekend)
-                   if weekday in PREM_RESULT_DAYS else None)
-        if results:
-            items.append({"source": "rugby-scores", "speech": results})
-
-        taken = 0
-        for item in (_rss_items(SPORT_FEEDS["rugby"])
-                     if weekday in PREM_STORY_DAYS else []):
-            if taken >= PREM_STORIES:
-                break
-            if item["title"] in seen or _is_rolling(item):
-                continue
-            haystack = (item["title"] + " " + item["summary"]).lower()
-            if any(term in haystack for term in RUGBY_PREM_TERMS):
-                seen.add(item["title"])
-                taken += 1
-                items.append({"source": "rugby", "speech": _story(item)})
-
-        # What is still to be played closes the rugby, since "still to come"
-        # is a natural way to leave a segment.
-        fixtures = (_prem_fixtures_speech(weekend, now, bool(results))
-                    if weekday in PREM_FIXTURE_DAYS else None)
-        if fixtures:
-            items.append({"source": "rugby-fixtures", "speech": fixtures})
-
-    if include_other:
-        for name, wanted in SPORT_MIX:
-            url = SPORT_FEEDS.get(name)
-            if not url:
-                continue
-            for item in _rss_items(url)[:wanted]:
-                if item["title"] in seen or _is_rolling(item):
-                    continue
-                seen.add(item["title"])
-                items.append({"source": name, "speech": _story(item)})
-
-    if include_afl:
-        # Reporting first, then the scores, so the segment reads as news with a
-        # results round up rather than a list of numbers with nothing around it.
-        story = _first_story(SPORT_FEEDS["afl"], seen)
-        if story is not None:
-            seen.add(story["title"])
-            items.append({"source": "afl-news", "speech": _story(story)})
-
-        results = _afl_results()
-        if results:
-            items.append({
-                "source": "afl-scores",
-                "speech": "And the latest from the A F L. "
-                          + " ".join(r["speech"] for r in results),
-            })
-
+    for name in (sports() if chosen is None else chosen):
+        if name == "rugby-premiership":
+            items.extend(_premiership(now, seen))
+        elif name == "afl":
+            items.extend(_afl(seen))
+        else:
+            items.extend(_bbc_sport(name, seen))
     return items
