@@ -27,14 +27,9 @@ starting with the time. News and weather on the hour, sport and weather on the
 half. The presenter then introduces the next song. A section with nothing in it
 is left out instead of being announced as empty.
 
-**The presenter** is openly an AI, the whole staff, and stuck in the studio. It
-never gives an opinion on a record, since it has not heard one.
-
 ## Design
 
-There is no language model in the playback loop. The station was built for an
-8GB Apple M1, where a resident local model causes memory pressure, and a paid
-API call per break was ruled out as a permanent dependency. Presenter lines are
+There is no language model in the playback loop. Presenter lines are
 written ahead of time and selected at runtime. Bulletins need no generation at
 all, because they are filled from feeds.
 
