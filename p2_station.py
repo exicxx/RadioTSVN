@@ -49,6 +49,7 @@ from dotenv import load_dotenv
 import bulletin
 import patter
 import library
+import modes
 import radio_auth
 import radio_speech
 
@@ -131,19 +132,21 @@ def next_slot_time(now):
 
 
 def read_playback(sp):
-    """Return (track, progress_ms, device) or (None, 0, None) if nothing plays.
+    """Return (track, progress_ms, device, context), or (None, 0, None, None).
 
-    Network failures are raised rather than swallowed, because "Spotify is
-    unreachable" and "nothing is playing" want different handling and the
-    difference matters when reading the log afterwards.
+    The context is what the listener started playing, such as a playlist, and
+    is None when there is none. Network failures are raised rather than
+    swallowed, because "Spotify is unreachable" and "nothing is playing" want
+    different handling and the difference matters when reading the log.
     """
     state = sp.current_playback()
     if state is None or state.get("item") is None:
-        return None, 0, None
+        return None, 0, None, None
     return (
         radio_auth.describe(state["item"]),
         state.get("progress_ms") or 0,
         state["device"],
+        state.get("context"),
     )
 
 
@@ -498,7 +501,23 @@ def main():
         station_name, crossfade_ms / 1000))
     presenter_voice = usable_voice(presenter_voice, FALLBACK_PRESENTER)
     newsreader_voice = usable_voice(newsreader_voice, FALLBACK_NEWSREADER)
-    print("Presenter {}, newsreader {}.\n".format(presenter_voice, newsreader_voice))
+
+    # Each mode may name its own presenter voice. An unset one, or one that
+    # fails to load, falls back to the general presenter rather than to Piper,
+    # because the general voice is already known to work.
+    presenter_voices = {modes.GENERAL: presenter_voice}
+    for each in modes.PRESENTED[1:]:
+        wanted = os.getenv(modes.voice_setting(each), "").strip()
+        presenter_voices[each] = (usable_voice(wanted, presenter_voice)
+                                  if wanted else presenter_voice)
+
+    def voice_for(current):
+        """The presenter's voice in a mode, the general voice if it has none."""
+        return presenter_voices.get(current, presenter_voice)
+
+    print("Presenter {}, newsreader {}.".format(presenter_voice, newsreader_voice))
+    print("Mode voices: {}.\n".format(", ".join(
+        "{} {}".format(each, presenter_voices[each]) for each in modes.PRESENTED)))
 
     # The library can only be read once the client exists, which is why this
     # sits after authorisation rather than with the other settings above.
@@ -513,6 +532,9 @@ def main():
                   "two will fight.")
 
     pool = ThreadPoolExecutor(max_workers=1)
+
+    playlist_names = modes.PlaylistNames(sp)
+    mode = None
 
     last_uri = None
     last_progress = 0
@@ -550,7 +572,7 @@ def main():
     try:
         while True:
             try:
-                track, progress, device = read_playback(sp)
+                track, progress, device, context = read_playback(sp)
             except Exception as error:
                 print("\n  Spotify unreachable ({}). Retrying in {}s."
                       .format(type(error).__name__, backoff))
@@ -604,6 +626,18 @@ def main():
                             library.record_skip(rotation, last_uri)
                 print("\nNOW  {} - {}".format(track["artists"], track["title"]))
 
+                # The mode follows what the listener is playing. For now it is
+                # only reported, so the detection can be checked on its own
+                # before anything is made to depend on it.
+                detected, playlist_name = modes.mode_for_context(
+                    context, playlist_names
+                )
+                if detected is not None and detected != mode:
+                    mode = detected
+                    print("  MODE {}{}".format(
+                        mode,
+                        " ({})".format(playlist_name) if playlist_name else ""))
+
                 if rotation is not None:
                     library.record_play(
                         rotation, track["uri"],
@@ -645,14 +679,20 @@ def main():
                             slot.strftime("%H:%M"), kind))
 
 
+                        # The voice is fixed when the bulletin is prepared, so
+                        # a mode change before it airs cannot split it between
+                        # two presenters.
+                        bulletin_voice = voice_for(mode)
+
                         def rebuild_handover(fresh, kind=kind, slot=slot,
-                                             number=bulletin_count):
+                                             number=bulletin_count,
+                                             voice=bulletin_voice):
                             """Re render the closing line for a corrected next track."""
                             part = bulletin.signoff(
                                 kind, slot, station_name, fresh, recent_lines
                             )
                             part["path"], part["duration_ms"] = radio_speech.synthesise(
-                                part["text"], presenter_voice,
+                                part["text"], voice,
                                 "bulletin_{:04d}_handover".format(number),
                             )
                             return part
@@ -663,7 +703,7 @@ def main():
                             "next_uri": expected_next["uri"] if expected_next else None,
                             "rebuild": rebuild_handover,
                             "future": pool.submit(
-                                render_bulletin, parts, presenter_voice,
+                                render_bulletin, parts, bulletin_voice,
                                 newsreader_voice, bulletin_count,
                             ),
                         }
@@ -719,7 +759,7 @@ def main():
                 pending_break = {
                     "uri": track["uri"],
                     "next_uri": next_track["uri"] if next_track else None,
-                    "future": pool.submit(render_break, parts, presenter_voice,
+                    "future": pool.submit(render_break, parts, voice_for(mode),
                                           break_count),
                 }
 

@@ -51,10 +51,22 @@ mood playlists by time of day is planned and not yet implemented.
 
    Piper fallback voices are downloaded automatically on first use.
 
-5. Set `LIBRARY_PLAYLIST` and the bulletin settings in `.env`
+5. Choose voices. The audition plays a short test script in each British
+   Kokoro voice, with each voice giving its name. Set the chosen voices in
+   `.env`.
+
+   ```bash
+   .venv/bin/python audition_voices.py                # general presenter
+   .venv/bin/python audition_voices.py --mode news    # newsreader
+   .venv/bin/python audition_voices.py --mode club    # also chill, sunday
+   ```
+
+   `--voices bm_george,bm_lewis` limits the audition to a shortlist.
+
+6. Set `LIBRARY_PLAYLIST` and the bulletin settings in `.env`
    (see [Configuration](#configuration)).
 
-6. Verify the setup in stages, with a track playing in the Spotify desktop app.
+7. Verify the setup in stages, with a track playing in the Spotify desktop app.
    The first run opens a browser window to authorise the app.
 
    ```bash
@@ -62,7 +74,7 @@ mood playlists by time of day is planned and not yet implemented.
    .venv/bin/python p1_talk_once.py     # speech and volume ducking over one track
    ```
 
-7. Run the station.
+8. Run the station.
 
    ```bash
    .venv/bin/python p2_station.py
@@ -84,6 +96,8 @@ default.
 | `STATION_NAME` | Station name as spoken, following "Radio" |
 | `PRESENTER_VOICE` | Kokoro voice (e.g. `bm_george`) or Piper voice (e.g. `en_GB-alan-medium`) |
 | `NEWS_VOICE` | Voice used for bulletins |
+| `PRESENTER_VOICE_CLUB`, `_CHILL`, `_SUNDAY` | Presenter voice in each mode. Defaults to `PRESENTER_VOICE` |
+| `PLAYLIST_PREFIX` | Name prefix that marks a playlist as a station playlist. Defaults to `Radio TSVN` |
 | `PIPER_VOICE` | Presenter voice used if Kokoro fails to load |
 | `CROSSFADE_MS` | Spotify's crossfade setting in milliseconds, or 0 |
 | `NEWS_MIX` | News categories and headline counts, in reading order |
@@ -93,6 +107,13 @@ default.
 
 A bulletin setting left out of `.env` takes its default. A bulletin setting
 present but empty disables that section.
+
+**Modes.** The mode is set by the playlist Spotify is playing. A playlist whose
+name contains `PLAYLIST_PREFIX` is a station playlist, and the rest of its name
+selects the mode. A name containing "Club", "Chill" or "Sunday" selects that
+mode, and any other station playlist is General. Matching ignores case and
+spaces. The mode currently sets the presenter's voice. Mode specific lines,
+break frequency and bulletin rules are in development.
 
 **News.** `NEWS_MIX` takes a comma separated list of `category:count` pairs, for
 example `uk:2, local:1, world:1`. Available categories are `uk`, `world`,
@@ -124,6 +145,18 @@ tracks into a playlist in the listener's own library.
 
 If no playlist is configured, or it cannot be read, the station falls back to
 presenting over whatever Spotify is playing.
+
+### Station playlists
+
+The project's own playlists are public and can be copied as a starting library.
+
+| Playlist | Link |
+|---|---|
+| Radio TSVN - General Listening | [Open in Spotify](https://open.spotify.com/playlist/4Brg9QxPqst37gLjGORvl6) |
+
+To copy one, open it in the Spotify app, select all tracks (Cmd+A), and add them
+to a new playlist in the listener's own library. Set `LIBRARY_PLAYLIST` to the
+new playlist's name.
 
 Planned mood playlists, for selection by time of day:
 
@@ -223,6 +256,9 @@ User-Agent.
 | `p2_station.py` | Station loop |
 | `library.py` | Track selection and rotation state |
 | `patter.py`, `patter_bulk.py` | Presenter line bank |
+| `patter_modes.py` | Presenter lines for Club, Chill and Sunday modes |
+| `modes.py` | Mode detection from the playing playlist |
+| `audition_voices.py` | Voice audition for choosing voices |
 | `bulletin.py` | Bulletin assembly |
 | `feeds.py` | News, sport and weather retrieval |
 | `radio_speech.py` | Speech synthesis, playback and volume control |
