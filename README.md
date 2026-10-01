@@ -77,11 +77,21 @@ mood playlists by time of day is planned and not yet implemented.
 8. Run the station.
 
    ```bash
-   .venv/bin/python p2_station.py
+   ./radio
    ```
 
-   `--bulletin news` or `--bulletin sport` schedules a bulletin a few seconds
-   after start, for testing. Ctrl-C stops the station and restores the volume.
+   Ctrl-C stops the station and restores the volume. The `radio` launcher runs
+   from any directory and uses the project's virtual environment.
+
+   | Command | Action |
+   |---|---|
+   | `./radio` | Start the station |
+   | `./radio bulletin news` | Start with a test bulletin a few seconds in (also `sport`) |
+   | `./radio audition club` | Voice audition (also `general`, `chill`, `sunday`, `news`) |
+   | `./radio history <export> <out.csv>` | Playlist candidates from listening history |
+
+   For one-click start on macOS, an AppleScript application can open Terminal
+   and run the launcher, and can be kept in the Dock.
 
 ## Configuration
 
@@ -266,6 +276,7 @@ User-Agent.
 | `radio_auth.py` | Spotify authentication |
 | `history_candidates.py` | Playlist candidates from listening history |
 | `p0_now_playing.py`, `p1_talk_once.py` | Setup verification |
+| `radio` | Launcher for the station and tools |
 
 ## Licence
 

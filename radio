@@ -1,0 +1,40 @@
+#!/bin/bash
+# Launcher for RadioTSVN. Runs from any directory, using the project's own
+# virtual environment. The scripts locate their files relative to themselves,
+# so the working directory is left alone and relative paths given as arguments
+# still resolve.
+#
+#   ./radio                    start the station
+#   ./radio audition [mode]    voice audition: general, club, chill, sunday, news
+#   ./radio bulletin <kind>    start the station with a test bulletin: news, sport
+#   ./radio history <export> <out.csv>
+#                              playlist candidates from listening history
+
+set -e
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PYTHON="$HERE/.venv/bin/python"
+
+if [ ! -x "$PYTHON" ]; then
+    echo "No virtual environment found at $HERE/.venv. See the README for setup."
+    exit 1
+fi
+
+case "${1:-station}" in
+    station)
+        exec "$PYTHON" "$HERE/p2_station.py"
+        ;;
+    audition)
+        exec "$PYTHON" "$HERE/audition_voices.py" --mode "${2:-general}" "${@:3}"
+        ;;
+    bulletin)
+        exec "$PYTHON" "$HERE/p2_station.py" --bulletin "${2:-news}"
+        ;;
+    history)
+        exec "$PYTHON" "$HERE/history_candidates.py" "${@:2}"
+        ;;
+    *)
+        echo "Usage: ./radio [station | audition <mode> | bulletin <news|sport> | history <export> <out.csv>]"
+        exit 1
+        ;;
+esac
