@@ -65,7 +65,7 @@ ROLES = {
         "the news",
         "Here are the headlines. A \u00a32.4bn rail investment for the North of "
         "England. Leicester beat Northampton by twenty seven points to "
-        "nineteen. And in London, fourteen degrees, with a sixty percent "
+        "nineteen. And locally, fourteen degrees, with a sixty percent "
         "chance of rain.",
     ),
 }

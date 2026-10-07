@@ -54,7 +54,16 @@ mood playlists by time of day is planned and not yet implemented.
 
    Piper fallback voices are downloaded automatically on first use.
 
-5. Choose voices. The audition plays a short test script in each British
+5. Choose what the bulletins cover. The script asks for a weather location, the
+   news categories and the sports to hear, checks each against its live source
+   and writes the answers to `.env`. Nothing is assumed, so a bulletin only
+   contains what is chosen here.
+
+   ```bash
+   .venv/bin/python setup_content.py
+   ```
+
+6. Choose voices. The audition plays a short test script in each British
    Kokoro voice, with each voice giving its name. Set the chosen voices in
    `.env`.
 
@@ -66,10 +75,10 @@ mood playlists by time of day is planned and not yet implemented.
 
    `--voices bm_george,bm_lewis` limits the audition to a shortlist.
 
-6. Set `LIBRARY_PLAYLIST` and the bulletin settings in `.env`
+7. Set `LIBRARY_PLAYLIST` in `.env`
    (see [Configuration](#configuration)).
 
-7. Verify the setup in stages, with a track playing in the Spotify desktop app.
+8. Verify the setup in stages, with a track playing in the Spotify desktop app.
    The first run opens a browser window to authorise the app.
 
    ```bash
@@ -77,7 +86,7 @@ mood playlists by time of day is planned and not yet implemented.
    .venv/bin/python p1_talk_once.py     # speech and volume ducking over one track
    ```
 
-8. Run the station.
+9. Run the station.
 
    ```bash
    ./radio
@@ -118,8 +127,8 @@ default.
 | `SPORTS` | Sports covered, in reading order |
 | `WEATHER_LOCATION` | Place name with optional country code, or latitude and longitude |
 
-A bulletin setting left out of `.env` takes its default. A bulletin setting
-present but empty disables that section.
+A bulletin setting that is left out of `.env` or empty disables that section.
+`setup_content.py` sets all four.
 
 **Modes.** The mode is set by the playlist Spotify is playing. A playlist whose
 name contains `PLAYLIST_PREFIX` is a station playlist, and the rest of its name
@@ -151,7 +160,7 @@ as a BBC Sport section by its URL name, such as `cricket`, `football`,
 `athletics`, and contributes one headline per bulletin.
 
 **Weather.** `WEATHER_LOCATION` accepts a place name with an optional two letter
-country code (`London, GB`), or coordinates (`53.48, -2.24`). Place names are
+country code (`Paris, FR`), or coordinates (`48.85, 2.35`). Place names are
 resolved through the Open-Meteo geocoding API.
 
 ## Playlists
@@ -281,6 +290,7 @@ User-Agent.
 | `patter_modes.py` | Presenter lines for Club, Chill and Sunday modes |
 | `modes.py` | Mode detection from the playing playlist |
 | `audition_voices.py` | Voice audition for choosing voices |
+| `setup_content.py` | Interactive choice of weather location, news and sport |
 | `bulletin.py` | Bulletin assembly |
 | `feeds.py` | News, sport and weather retrieval |
 | `radio_speech.py` | Speech synthesis, playback and volume control |

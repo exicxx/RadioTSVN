@@ -12,7 +12,9 @@ is no reason to pull the same feeds on every poll, and the sources are free and
 unauthenticated and should be treated accordingly.
 
 What is covered is configured in .env, through NEWS_MIX, LOCAL_NEWS_FEED,
-SPORTS and WEATHER_LOCATION. The defaults and formats are set out below.
+SPORTS and WEATHER_LOCATION. Nothing about the listener is assumed, so a setting
+that is absent or empty switches its section off. setup_content.py asks for each
+one and writes the answers to .env.
 
 Sources, all free and without keys:
     BBC News and BBC Sport RSS, phys.org for space news
@@ -54,18 +56,15 @@ NEWS_FEEDS = {
     "space": "https://phys.org/rss-feed/space-news/",
 }
 
-# Settings read from the environment, with the defaults used when a setting is
-# absent. Each is read when a bulletin is built, so .env must be loaded first.
+# Settings read from the environment. Each is read when a bulletin is built, so
+# .env must be loaded first. A setting that is absent or empty switches its
+# section off.
 #
 #     NEWS_MIX          categories and headline counts, in reading order
-#     LOCAL_NEWS_FEED   RSS feed read as the "local" category; empty for none
-#     SPORTS            sports in reading order; empty for no sport
+#     LOCAL_NEWS_FEED   RSS feed read as the "local" category
+#     SPORTS            sports in reading order
 #     WEATHER_LOCATION  place name, optionally with a two letter country code,
-#                       or "latitude, longitude"; empty for no weather
-DEFAULT_NEWS_MIX = "uk:2, local:1, world:1, space:1"
-DEFAULT_LOCAL_NEWS_FEED = "https://feeds.bbci.co.uk/news/england/london/rss.xml"
-DEFAULT_SPORTS = "rugby-premiership, athletics, afl"
-DEFAULT_WEATHER_LOCATION = "London, GB"
+#                       or "latitude, longitude"
 
 # Any BBC Sport section can be named in SPORTS by its address, for example
 # cricket, football, formula1, golf, tennis, rugby-league, boxing, cycling or
@@ -148,14 +147,9 @@ def _get(url):
     return body
 
 
-def _setting(name, default):
-    """An environment setting, stripped, or the default if it is not set.
-
-    A setting present but empty is returned as empty, which is how a section is
-    switched off, so absence and emptiness are deliberately different.
-    """
-    value = os.getenv(name)
-    return default if value is None else value.strip()
+def _setting(name):
+    """An environment setting, stripped, or an empty string if it is not set."""
+    return (os.getenv(name) or "").strip()
 
 
 def _names(text):
@@ -170,7 +164,7 @@ def news_mix():
     a count that is not a whole number is treated as one.
     """
     mix = []
-    for entry in _names(_setting("NEWS_MIX", DEFAULT_NEWS_MIX)):
+    for entry in _names(_setting("NEWS_MIX")):
         name, _, count = entry.partition(":")
         mix.append((name.strip(), int(count) if count.strip().isdigit() else 1))
     return mix
@@ -178,7 +172,7 @@ def news_mix():
 
 def sports():
     """The configured sports, in reading order."""
-    return _names(_setting("SPORTS", DEFAULT_SPORTS))
+    return _names(_setting("SPORTS"))
 
 
 _locations = {}
@@ -189,12 +183,12 @@ def weather_location():
 
     Accepts "latitude, longitude" directly. Otherwise the setting is a place
     name, optionally followed by a two letter country code to settle ambiguous
-    names, such as "London, GB" against London, New Hampshire. Names are
+    names, such as "Paris, FR" against Paris, Texas. Names are
     resolved once through Open-Meteo's geocoding service and remembered for the
     life of the process. None means no weather, either because the setting is
     empty or because the place could not be found.
     """
-    text = _setting("WEATHER_LOCATION", DEFAULT_WEATHER_LOCATION)
+    text = _setting("WEATHER_LOCATION")
     if not text:
         return None
     if text in _locations:
@@ -332,7 +326,7 @@ def news(mix=None):
     """
     stories = []
     seen = set()
-    local_feed = _setting("LOCAL_NEWS_FEED", DEFAULT_LOCAL_NEWS_FEED)
+    local_feed = _setting("LOCAL_NEWS_FEED")
     for category, wanted in (mix or news_mix()):
         url = local_feed if category == "local" else NEWS_FEEDS.get(category)
         if not url:
