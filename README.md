@@ -1,11 +1,10 @@
-# RadioTSVN
-
-A personal radio station built on the Spotify Web API.
 <p align="center">
   <img src="assets/banner.png" alt="Radio TSVN, radio for the individual" width="360">
 </p>
 
-Tracks are selected from
+# RadioTSVN
+
+A personal radio station built on the Spotify Web API. Tracks are selected from
 a Spotify playlist under standard rotation rules, a synthesised presenter speaks
 between them, and news, sport and weather bulletins are read from public feeds
 on the hour and half hour. Speech is synthesised locally. No language model runs
