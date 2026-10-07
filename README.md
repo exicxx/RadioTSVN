@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/banner.png" alt="Radio TSVN, radio for the individual" width="360">
+</p>
+
 # RadioTSVN
 
 Radio for the Individual.
