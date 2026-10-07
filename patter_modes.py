@@ -10,8 +10,10 @@ Segments are as in patter.py, with one addition. "open" is spoken once, when
 the station switches into the mode. A mode without an "open" segment switches
 without comment.
 
-Not yet wired into the station loop. The mode switch that selects these is the
-next piece of work.
+patter.bank_for selects the bank for the active mode. A mode's bank replaces the
+general one, so a segment a mode does not define is never spoken in that mode.
+A line that names the next track introduces it itself, so a break that uses one
+carries no separate intro.
 """
 
 MODE_SEGMENTS = {

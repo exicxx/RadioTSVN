@@ -68,18 +68,9 @@ NO_DEVICE_TIMEOUT_SECONDS = 30
 # pressing play.
 RESUME_CHECK_SECONDS = 2
 
-# Ordinary chat fires after this many tracks, redrawn after every break so the
-# rhythm does not become predictable.
-BREAK_EVERY_MIN = 2
-BREAK_EVERY_MAX = 3
-
-# How often the optional parts of an ordinary break appear.
-CHAT_CHANCE = 0.6
-INTRO_CHANCE = 0.75
-
-# How often a break is played entirely straight, with no witty line anywhere in
-# it. Every other break carries exactly one.
-NO_JOKE_CHANCE = 0.2
+# How often breaks fire, how often their optional parts appear, how often a
+# break is played entirely straight and whether bulletins run are all set per
+# mode in modes.MODE_SETTINGS.
 
 # Gap between the end of the opening part and the end of the track.
 OUTRO_LEAD_MS = 500
@@ -301,8 +292,22 @@ def attempt(action):
         return False
 
 
-def compose_break(track, next_track, station_name, recent_types, recent_lines):
-    """Build the parts of one ordinary break, in playing order."""
+def draw_gap(mode):
+    """Tracks until the next ordinary break, drawn from the mode's range."""
+    low, high = modes.settings_for(mode)["break_every"]
+    return random.randint(low, high)
+
+
+def compose_break(track, next_track, station_name, recent_types, recent_lines,
+                  mode=None, announce_mode=False):
+    """Build the parts of one ordinary break, in playing order.
+
+    The mode picks the bank of lines and how often each optional part appears.
+    With announce_mode the break is the mode's open segment alone, spoken once
+    when the station switches into the mode.
+    """
+    settings = modes.settings_for(mode)
+    bank = patter.bank_for(mode)
     fields = {
         "artist": track["artists"],
         "title": track["title"],
@@ -323,16 +328,22 @@ def compose_break(track, next_track, station_name, recent_types, recent_lines):
     # the line. Naming the year outright is allowed and is deliberately rare,
     # so any line that uses these fields is one where the year is known.
 
-    opening = patter.choose_segment(recent_types)
-    plan = [opening]
+    if announce_mode:
+        plan = ["open"]
+    else:
+        opening = patter.choose_segment(recent_types, bank)
+        plan = [opening]
 
-    # Chat only follows a part that referred to the track just played, so the
-    # break reads as "that was X, a thought, here comes Y".
-    if opening == "track_back" and random.random() < CHAT_CHANCE:
-        plan.append("filler")
+        # Chat only follows a part that referred to the track just played, so
+        # the break reads as "that was X, a thought, here comes Y". A mode with
+        # no filler lines has no thoughts to add.
+        if (opening == "track_back" and "filler" in bank
+                and random.random() < settings["chat_chance"]):
+            plan.append("filler")
 
-    if next_track is not None and random.random() < INTRO_CHANCE:
-        plan.append("intro")
+        if (next_track is not None
+                and random.random() < settings["intro_chance"]):
+            plan.append("intro")
 
     # At most one part of a break carries a joke, and which part it is falls
     # evenly across whichever parts the break actually has. Letting each part
@@ -341,18 +352,26 @@ def compose_break(track, next_track, station_name, recent_types, recent_lines):
     # obvious when the bank was first heard aloud. Some breaks carry no joke at
     # all, because a punchline on every single break is its own kind of tell.
     carrier = None
-    if random.random() >= NO_JOKE_CHANCE:
+    if not announce_mode and random.random() >= settings["no_joke_chance"]:
         carrier = random.randrange(len(plan))
 
-    return [
+    parts = [
         _part(segment, "witty" if index == carrier else "plain",
-              fields, recent_lines)
+              fields, recent_lines, bank)
         for index, segment in enumerate(plan)
     ]
 
+    # A line that names the next track introduces it itself, so nothing is
+    # added after it. A separate thought or introduction would repeat it.
+    if len(parts) > 1 and patter.uses_next_track(parts[0]["template"]):
+        parts = parts[:1]
+    return parts
 
-def _part(segment, tone, fields, recent_lines):
-    template, text = patter.build_line(segment, tone, fields, recent_lines)
+
+def _part(segment, tone, fields, recent_lines, bank):
+    template, text = patter.build_line(
+        segment, tone, fields, recent_lines, bank
+    )
     return {"segment": segment, "template": template, "text": text}
 
 
@@ -523,6 +542,9 @@ def main():
     # sits after authorisation rather than with the other settings above.
     rotation = open_library(sp, os.getenv("LIBRARY_PLAYLIST", "").strip())
     queued_uri = None
+    # A track the station queued before the listener changed playlist. Spotify
+    # offers no way to remove a queued track, so it is skipped when it starts.
+    stale_uri = None
     if rotation is not None:
         # Spotify's shuffle and the station's rotation are two things choosing
         # the same music, and the station's is the one that knows what it played
@@ -535,12 +557,14 @@ def main():
 
     playlist_names = modes.PlaylistNames(sp)
     mode = None
+    settings = modes.settings_for(mode)
+    announce_pending = False
 
     last_uri = None
     last_progress = 0
     last_duration = 0
     tracks_since_break = 0
-    target_gap = random.randint(BREAK_EVERY_MIN, BREAK_EVERY_MAX)
+    target_gap = draw_gap(mode)
     recent_types = []
     recent_lines = []
     pending_break = None
@@ -603,7 +627,20 @@ def main():
                 )
                 resync = False
 
+            if stale_uri is not None and track["uri"] == stale_uri:
+                print("\n  skipping {} - {}, queued before the playlist "
+                      "changed".format(track["artists"], track["title"]))
+                stale_uri = None
+                attempt(sp.next_track)
+                resync = True
+                time.sleep(POLL_SECONDS)
+                continue
+
             if track["uri"] != last_uri:
+                # A stale track only ever follows the first track after the
+                # switch, so by the next change it has either played or gone.
+                stale_uri = None
+                skipped_uri = None
                 if last_uri is not None:
                     fraction = last_progress / last_duration if last_duration else 0.0
                     verdict = "skipped" if fraction < COMPLETION_THRESHOLD else "played"
@@ -618,27 +655,58 @@ def main():
                                       median / 1000, len(changeovers),
                                       crossfade_ms / 1000))
                     tracks_since_break += 1
-                    if rotation is not None:
-                        # The loop already worked out whether that was a skip
-                        # for the sake of the log. The rotation store wants the
-                        # same verdict, so it is reused rather than recomputed.
-                        if verdict == "skipped":
-                            library.record_skip(rotation, last_uri)
+                    if verdict == "skipped":
+                        skipped_uri = last_uri
                 print("\nNOW  {} - {}".format(track["artists"], track["title"]))
 
-                # The mode follows what the listener is playing. For now it is
-                # only reported, so the detection can be checked on its own
-                # before anything is made to depend on it.
+                # The mode follows what the listener is playing. A change of
+                # mode starts the new mode's rhythm from nothing, drops any
+                # break written in the old one, and drops a prepared bulletin
+                # if the new mode does not run them.
                 detected, playlist_name = modes.mode_for_context(
                     context, playlist_names
                 )
+                previous_mode = mode
                 if detected is not None and detected != mode:
                     mode = detected
+                    settings = modes.settings_for(mode)
                     print("  MODE {}{}".format(
                         mode,
                         " ({})".format(playlist_name) if playlist_name else ""))
+                    if previous_mode == modes.GENERAL and queued_uri is not None:
+                        stale_uri = queued_uri
+                        queued_uri = None
+                    pending_break = None
+                    tracks_since_break = 0
+                    target_gap = draw_gap(mode)
+                    announce_pending = (settings["speaks"]
+                                        and "open" in patter.bank_for(mode))
+                    if (pending_bulletin is not None
+                            and not (settings["bulletins"] or forced_kind)):
+                        print("  dropping the prepared bulletin, {} mode runs "
+                              "none".format(mode))
+                        pending_bulletin = None
+                        slot = next_slot_time(datetime.datetime.now())
 
-                if rotation is not None:
+                # A skip is recorded against the rotation only if the listener
+                # is still in the mode the track was picked for. Leaving for
+                # another playlist ends the track early without being a verdict
+                # on it, and penalising it would quietly demote a favourite.
+                if (skipped_uri is not None and rotation is not None
+                        and previous_mode == modes.GENERAL
+                        and mode == previous_mode):
+                    library.record_skip(rotation, skipped_uri)
+
+                # Nothing is counted towards a break while the station is
+                # silent, so the first break after it returns is a full gap away.
+                if not settings["speaks"]:
+                    tracks_since_break = 0
+                    pending_break = None
+
+                # Only the general mode picks its own tracks, from the library
+                # playlist. Any other station playlist plays in its own order,
+                # and a silent playlist is none of the station's business.
+                if rotation is not None and mode == modes.GENERAL:
                     library.record_play(
                         rotation, track["uri"],
                         library.primary_artist(track["artists"]),
@@ -661,7 +729,13 @@ def main():
 
             # Clock led bulletin. Rendered ahead of the slot, aired on it.
             if pending_bulletin is None:
-                if (slot - now).total_seconds() <= BULLETIN_PREROLL_SECONDS:
+                bulletins_on = settings["bulletins"] or forced_kind
+                if not bulletins_on and now >= slot:
+                    slot = next_slot_time(now)
+                    print("\n  no bulletins in {} mode, next slot {}".format(
+                        mode or "unidentified", slot.strftime("%H:%M")))
+                elif (bulletins_on and
+                        (slot - now).total_seconds() <= BULLETIN_PREROLL_SECONDS):
                     kind = forced_kind or ("news" if slot.minute == 0 else "sport")
                     expected_next = read_next(sp)
                     parts = bulletin.compose(
@@ -739,18 +813,20 @@ def main():
                     pending_bulletin = None
                     pending_break = None
                     tracks_since_break = 0
-                    target_gap = random.randint(BREAK_EVERY_MIN, BREAK_EVERY_MAX)
+                    target_gap = draw_gap(mode)
                     resync = True
                     continue
 
             # Music led break. Suppressed while a bulletin is queued, so the two
             # cannot land on top of each other.
-            if (pending_break is None and pending_bulletin is None
-                    and tracks_since_break >= target_gap):
+            if (settings["speaks"] and pending_break is None
+                    and pending_bulletin is None
+                    and (announce_pending or tracks_since_break >= target_gap)):
                 break_count += 1
                 next_track = read_next(sp)
                 parts = compose_break(
-                    track, next_track, station_name, recent_types, recent_lines
+                    track, next_track, station_name, recent_types, recent_lines,
+                    mode, announce_mode=announce_pending,
                 )
                 print("\n  preparing {}".format(
                     " then ".join(p["segment"] for p in parts)))
@@ -758,6 +834,7 @@ def main():
                     print("  queue is empty, no intro this time")
                 pending_break = {
                     "uri": track["uri"],
+                    "announces": announce_pending,
                     "next_uri": next_track["uri"] if next_track else None,
                     "future": pool.submit(render_break, parts, voice_for(mode),
                                           break_count),
@@ -802,10 +879,13 @@ def main():
 
                     for part in parts:
                         recent_lines.append(part["template"])
-                    recent_types.append(parts[0]["segment"])
+                    if pending_break["announces"]:
+                        announce_pending = False
+                    else:
+                        recent_types.append(parts[0]["segment"])
                     pending_break = None
                     tracks_since_break = 0
-                    target_gap = random.randint(BREAK_EVERY_MIN, BREAK_EVERY_MAX)
+                    target_gap = draw_gap(mode)
                     resync = True
                     print("  next break in {} tracks".format(target_gap))
                     continue
@@ -817,6 +897,8 @@ def main():
 
             if pending_bulletin is not None:
                 status = "bulletin " + pending_bulletin["slot"].strftime("%H:%M")
+            elif not settings["speaks"]:
+                status = "silent"
             elif pending_break is not None:
                 status = "queued"
             else:

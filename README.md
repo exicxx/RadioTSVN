@@ -122,8 +122,17 @@ present but empty disables that section.
 name contains `PLAYLIST_PREFIX` is a station playlist, and the rest of its name
 selects the mode. A name containing "Club", "Chill" or "Sunday" selects that
 mode, and any other station playlist is General. Matching ignores case and
-spaces. The mode currently sets the presenter's voice. Mode specific lines,
-break frequency and bulletin rules are in development.
+spaces. A mode sets the presenter's voice, the lines the presenter draws from,
+how often it speaks, how often a line is witty and whether bulletins run. The
+Club, Chill and Sunday modes each have their own lines, and Sunday and Club each
+open with a one off line when the station switches into them. The pacing for
+each mode is in `MODE_SETTINGS` in `modes.py`.
+
+A playlist without the prefix, an album, a podcast or a bare queue puts the
+station in silent mode. The presenter does not speak, no bulletins air and the
+station does not queue tracks until a station playlist plays again. Only the
+General mode picks its own tracks, from `LIBRARY_PLAYLIST`. Other modes play
+their playlist in its own order.
 
 **News.** `NEWS_MIX` takes a comma separated list of `category:count` pairs, for
 example `uk:2, local:1, world:1`. Available categories are `uk`, `world`,

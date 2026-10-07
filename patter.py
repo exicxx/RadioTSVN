@@ -18,6 +18,8 @@ synthesiser would misread should be spelled phonetically there.
 
 import random
 
+import patter_modes
+
 # The generated bank is optional. Deleting patter_bulk.py reverts the whole bulk
 # run and leaves the hand written lines below untouched.
 try:
@@ -194,8 +196,9 @@ SEGMENTS = {
 
 # Segment types chosen by their position in a break rather than by rotation.
 # intro only exists when the next track is known, so it is placed rather than
-# drawn. The clock is handled entirely by bulletin.py.
-POSITIONAL = ("intro",)
+# drawn. open is spoken once on switching into a mode, so it is placed as well.
+# The clock is handled entirely by bulletin.py.
+POSITIONAL = ("intro", "open")
 
 # Relative frequency of each opening segment. Naming the track that just played
 # is the most common thing a presenter does, so it carries most of the weight.
@@ -250,14 +253,24 @@ def _entry(item):
     return item, 1.0
 
 
-def _tier(segment, tone):
+def bank_for(mode):
+    """The segment bank in use for a mode.
+
+    A mode with lines of its own replaces the general bank outright rather than
+    adding to it, so a segment the mode leaves out, such as filler in club, is
+    never spoken in that mode. Any other mode uses the general bank.
+    """
+    return patter_modes.MODE_SEGMENTS.get(mode, SEGMENTS)
+
+
+def _tier(bank, segment, tone):
     """Return one tier of a pool, falling back to the other if it is empty.
 
     A segment with nothing written in the requested tone still has to say
     something, so the fallback keeps a half filled pool usable rather than
     making the loop handle an empty break.
     """
-    pool = SEGMENTS[segment]
+    pool = bank[segment]
     entries = pool.get(tone) or []
     if entries:
         return entries
@@ -265,9 +278,10 @@ def _tier(segment, tone):
     return pool.get(other) or []
 
 
-def choose_segment(recent_types):
+def choose_segment(recent_types, bank=None):
     """Pick the next segment type, avoiding anything used recently."""
-    rotatable = [s for s in SEGMENTS if s not in POSITIONAL]
+    bank = SEGMENTS if bank is None else bank
+    rotatable = [s for s in bank if s not in POSITIONAL]
     occasional = [s for s in rotatable if s not in ALWAYS_AVAILABLE]
     window = max(0, min(SEGMENT_MEMORY, len(occasional)))
     blocked = set(recent_types[-window:]) if window else set()
@@ -278,13 +292,27 @@ def choose_segment(recent_types):
     return random.choices(candidates, weights=weights, k=1)[0]
 
 
-def build_line(segment, tone, fields, recent_lines):
-    """Return (template, rendered_text) for the given segment and tone."""
-    pool = [_entry(item) for item in _tier(segment, tone)]
+def uses_next_track(template):
+    """True if a line names the next track, and so already introduces it."""
+    return "{next_" in template
+
+
+def build_line(segment, tone, fields, recent_lines, bank=None):
+    """Return (template, rendered_text) for the given segment and tone.
+
+    A line that names the next track is only eligible when there is one, since
+    otherwise it would be spoken with the title and artist missing.
+    """
+    bank = SEGMENTS if bank is None else bank
+    pool = [_entry(item) for item in _tier(bank, segment, tone)]
     window = recent_lines[-LINE_MEMORY:]
     candidates = [pair for pair in pool if pair[0] not in window]
     if not candidates:
         candidates = pool
+    if not fields.get("next_title"):
+        candidates = [
+            pair for pair in candidates if not uses_next_track(pair[0])
+        ] or candidates
     lines = [line for line, _ in candidates]
     weights = [weight for _, weight in candidates]
     template = random.choices(lines, weights=weights, k=1)[0]

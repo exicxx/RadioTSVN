@@ -34,6 +34,75 @@ MODE_KEYWORDS = (
 # Every mode that has a presenter, general first.
 PRESENTED = (GENERAL,) + tuple(mode for _, mode in MODE_KEYWORDS)
 
+# How each mode paces the presenter.
+#
+# break_every      the range of tracks between ordinary breaks, redrawn after
+#                  every break so the rhythm is not predictable
+# chat_chance      how often a break that names the track just played adds a
+#                  separate thought after it
+# intro_chance     how often a break closes by introducing the next track
+# no_joke_chance   how often a break is played entirely straight, every other
+#                  break carries exactly one witty line
+# bulletins        whether news and sport bulletins air on the hour and half hour
+# speaks           whether the presenter talks at all
+#
+# General holds the values the station used before modes existed.
+MODE_SETTINGS = {
+    GENERAL: {
+        "break_every": (2, 3),
+        "chat_chance": 0.6,
+        "intro_chance": 0.75,
+        "no_joke_chance": 0.2,
+        "bulletins": True,
+        "speaks": True,
+    },
+    # Rare and short, so plain lines dominate and there is no separate thought.
+    "club": {
+        "break_every": (5, 7),
+        "chat_chance": 0.0,
+        "intro_chance": 0.6,
+        "no_joke_chance": 0.6,
+        "bulletins": False,
+        "speaks": True,
+    },
+    "chill": {
+        "break_every": (3, 4),
+        "chat_chance": 0.5,
+        "intro_chance": 0.6,
+        "no_joke_chance": 0.3,
+        "bulletins": False,
+        "speaks": True,
+    },
+    # The chattiest mode, so breaks are frequent and jokes are common.
+    "sunday": {
+        "break_every": (1, 2),
+        "chat_chance": 0.8,
+        "intro_chance": 0.75,
+        "no_joke_chance": 0.15,
+        "bulletins": True,
+        "speaks": True,
+    },
+    # Plain music chosen by the listener. Nothing is said and nothing airs.
+    SILENT: {
+        "break_every": (2, 3),
+        "chat_chance": 0.0,
+        "intro_chance": 0.0,
+        "no_joke_chance": 1.0,
+        "bulletins": False,
+        "speaks": False,
+    },
+}
+
+
+def settings_for(mode):
+    """The pacing settings for a mode.
+
+    A mode of None means the playlist has not been identified yet, which is
+    treated as silent so that the presenter never speaks over music it has not
+    recognised as its own.
+    """
+    return MODE_SETTINGS[SILENT if mode is None else mode]
+
 
 def voice_setting(mode):
     """The .env setting naming the presenter's voice in a mode.
